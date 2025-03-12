@@ -53,6 +53,9 @@ class Token(BaseModel):
     token_type: str
     name: str
 
+class UserUpdate(BaseModel):
+    name: str
+
 class TransactionCreate(BaseModel):
     transaction_type: str
     transaction_category: str
@@ -61,6 +64,16 @@ class TransactionCreate(BaseModel):
     date: date
 
 class Transaction(TransactionCreate):
+    id: int
+
+class AssetLiabilityCreate(BaseModel):
+    category: str
+    type: str  # "Asset" or "Liability"
+    amount: int
+    description: str
+    date: date
+
+class AssetLiability(AssetLiabilityCreate):
     id: int
 
 # Helper functions
@@ -139,18 +152,15 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
 @app.post("/oauth/google", response_model=dict)
 async def handle_google_oauth(user_data: dict):
     try:
-        print("User Data: ", user_data)
         # Check if user already exists
         user_query = supabase.table("users").select("*").eq("username", user_data["email"]).execute()
-
-        print("User Query: ",user_query)
         
         if not user_query.data:
             # Create new user
             new_user = {
                 "username": user_data["email"],
-                "name": user_data["name"],
-                # "oauth_provider": "google"
+                "name": user_data.get("name", ""),
+                "oauth_provider": "google"
             }
             result = supabase.table("users").insert(new_user).execute()
         
@@ -159,8 +169,6 @@ async def handle_google_oauth(user_data: dict):
         access_token = create_access_token(
             data={"sub": user_data["email"]}, expires_delta=access_token_expires
         )
-
-        print("Access Token: ", access_token)
         
         return {"access_token": access_token, "token_type": "bearer", "name": user_data.get("name", "")}
     except Exception as e:
@@ -218,6 +226,26 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         raise credentials_exception
     return {"username": username, "id": user_query.data[0]["id"]}
 
+# New endpoint to update user name
+@app.put("/users/update-name", response_model=dict)
+async def update_user_name(user_update: UserUpdate, current_user: dict = Depends(get_current_user)):
+    try:
+        # Update user name in database
+        result = supabase.table("users").update({"name": user_update.name}).eq("id", current_user["id"]).execute()
+        
+        if not result.data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        return {"message": "Name updated successfully", "name": user_update.name}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred while updating the name: {str(e)}"
+        )
+
 @app.post("/transactions/", response_model=Transaction)
 async def create_transaction(transaction: TransactionCreate, current_user: dict = Depends(get_current_user)):
     try:
@@ -272,6 +300,38 @@ async def delete_transaction(transaction_id: int, current_user: dict = Depends(g
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred while deleting the transaction: {str(e)}"
+        )
+
+@app.post("/assets-liabilities/", response_model=AssetLiability)
+async def create_asset_liability(asset_liability: AssetLiabilityCreate, current_user: dict = Depends(get_current_user)):
+    try:
+        asset_liability_data = asset_liability.dict()
+        asset_liability_data["user_id"] = current_user["id"]
+        asset_liability_data["amount"] = int(asset_liability_data["amount"])
+        asset_liability_data["date"] = asset_liability_data["date"].isoformat()
+        
+        result = supabase.table("assets_liabilities").insert(asset_liability_data).execute()
+        
+        response_data = {**result.data[0]}
+        response_data["date"] = date.fromisoformat(response_data["date"])
+        return response_data
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred while creating the asset/liability: {str(e)}"
+        )
+
+@app.get("/assets-liabilities/", response_model=List[AssetLiability])
+async def get_assets_liabilities(current_user: dict = Depends(get_current_user)):
+    try:
+        result = supabase.table("assets_liabilities").select("*").eq("user_id", current_user["id"]).execute()
+        for item in result.data:
+            item["date"] = date.fromisoformat(item["date"])
+        return result.data
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred while fetching assets and liabilities: {str(e)}"
         )
 
 if __name__ == "__main__":
