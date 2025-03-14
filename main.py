@@ -46,7 +46,6 @@ class UserInDB(BaseModel):
     username: str
     password: str
     name: str
-    # is_verified: bool = False
 
 class Token(BaseModel):
     access_token: str
@@ -68,7 +67,7 @@ class Transaction(TransactionCreate):
 
 class AssetLiabilityCreate(BaseModel):
     category: str
-    type: str  # "Asset" or "Liability"
+    type: str
     amount: int
     description: str
     date: date
@@ -76,7 +75,7 @@ class AssetLiabilityCreate(BaseModel):
 class AssetLiability(AssetLiabilityCreate):
     id: int
 
-# Helper functions
+
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
@@ -93,7 +92,6 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-# API endpoints
 @app.post("/register", response_model=dict)
 async def register(user: UserCreate):
     # Check if user already exists
@@ -101,7 +99,7 @@ async def register(user: UserCreate):
     if user_query.data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already registered"
+            detail="Email address already registered, Please Login"
         )
     
     # Create new user
@@ -152,6 +150,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
 @app.post("/oauth/google", response_model=dict)
 async def handle_google_oauth(user_data: dict):
     try:
+        print("User_data", user_data)
         # Check if user already exists
         user_query = supabase.table("users").select("*").eq("username", user_data["email"]).execute()
         
@@ -170,38 +169,13 @@ async def handle_google_oauth(user_data: dict):
             data={"sub": user_data["email"]}, expires_delta=access_token_expires
         )
         
+        if user_query.data:
+            return {"access_token": access_token, "token_type": "bearer", "name": user_query.data[0]["name"]}
         return {"access_token": access_token, "token_type": "bearer", "name": user_data.get("name", "")}
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred during Google OAuth: {str(e)}"
-        )
-
-@app.get("/verify-email/{token}")
-async def verify_email(token: str):
-    try:
-        # Verify JWT token
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email = payload.get("sub")
-        if email is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid verification token"
-            )
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid verification token"
-        )
-    
-    # Update user verification status
-    try:
-        supabase.table("users").update({"is_verified": True}).eq("email", email).execute()
-        return {"message": "Email verified successfully"}
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred during email verification. Please try again later."
         )
 
 # JWT token verification
