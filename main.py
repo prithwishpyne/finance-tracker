@@ -17,7 +17,7 @@ app = FastAPI()
 # CORS middleware configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000","http://13.233.199.129:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -160,8 +160,7 @@ async def handle_google_oauth(user_data: dict):
             # Create new user
             new_user = {
                 "username": user_data["email"],
-                "name": user_data.get("name", ""),
-                "oauth_provider": "google"
+                "name": user_data["name"],
             }
             result = supabase.table("users").insert(new_user).execute()
         
