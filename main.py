@@ -14,7 +14,6 @@ load_dotenv()
 
 app = FastAPI()
 
-# CORS middleware configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000","http://13.233.199.129:3000"],
@@ -68,7 +67,7 @@ class Transaction(TransactionCreate):
 
 class AssetLiabilityCreate(BaseModel):
     category: str
-    type: str  # "Asset" or "Liability"
+    type: str
     amount: int
     description: str
     date: date
@@ -76,7 +75,6 @@ class AssetLiabilityCreate(BaseModel):
 class AssetLiability(AssetLiabilityCreate):
     id: int
 
-# Helper functions
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
@@ -93,7 +91,6 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-# API endpoints
 @app.post("/register", response_model=dict)
 async def register(user: UserCreate):
     # Check if user already exists
@@ -104,7 +101,6 @@ async def register(user: UserCreate):
             detail="Username already registered"
         )
     
-    # Create new user
     hashed_password = get_password_hash(user.password)
     new_user = {
         "username": user.username,
@@ -134,14 +130,12 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     user = UserInDB(**user_query.data[0])
     
     # Verify password
-    # if not verify_password(form_data.password):
     if not verify_password(form_data.password, user.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password"
         )
     
-    # Create access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
@@ -164,7 +158,6 @@ async def handle_google_oauth(user_data: dict):
             }
             result = supabase.table("users").insert(new_user).execute()
         
-        # Create access token
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
             data={"sub": user_data["email"]}, expires_delta=access_token_expires
@@ -179,34 +172,7 @@ async def handle_google_oauth(user_data: dict):
             detail=f"An error occurred during Google OAuth: {str(e)}"
         )
 
-@app.get("/verify-email/{token}")
-async def verify_email(token: str):
-    try:
-        # Verify JWT token
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email = payload.get("sub")
-        if email is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid verification token"
-            )
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid verification token"
-        )
-    
-    # Update user verification status
-    try:
-        supabase.table("users").update({"is_verified": True}).eq("email", email).execute()
-        return {"message": "Email verified successfully"}
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred during email verification. Please try again later."
-        )
-
-# JWT token verification
+# Token verification
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 async def get_current_user(token: str = Depends(oauth2_scheme)):
@@ -256,7 +222,6 @@ async def create_transaction(transaction: TransactionCreate, current_user: dict 
         transaction_data["user_id"] = current_user["id"]
         # Ensure amount is an integer
         transaction_data["amount"] = int(transaction_data["amount"])
-        # Convert date to ISO format string for database storage
         transaction_data["date"] = transaction_data["date"].isoformat()
         result = supabase.table("transactions").insert(transaction_data).execute()
         # Convert date string back to date object in response
