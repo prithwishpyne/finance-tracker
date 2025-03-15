@@ -16,7 +16,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000","http://65.0.139.178:3000"],
+    allow_origins=["http://localhost:3000","http://15.207.14.111:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -31,8 +31,8 @@ supabase: Client = create_client(supabase_url, supabase_key)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT configuration
-SECRET_KEY = "jHXLQVrOt/vVzhn1eDJSgJanbus779DiMS8r/SWVjn9gMmNNWhuoVrtGV1xszMhhaURpJgzSS+mL1Lscaw477Q=="
-ALGORITHM = "HS256"
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+ALGORITHM = os.getenv("DECODING_ALGORITHM")
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # Pydantic models
@@ -45,7 +45,6 @@ class UserInDB(BaseModel):
     username: str
     password: str
     name: str
-    # is_verified: bool = False
 
 class Token(BaseModel):
     access_token: str
@@ -62,18 +61,12 @@ class TransactionCreate(BaseModel):
     description: str
     date: date
 
-class Transaction(TransactionCreate):
-    id: int
-
 class AssetLiabilityCreate(BaseModel):
     category: str
     type: str
     amount: int
     description: str
     date: date
-
-class AssetLiability(AssetLiabilityCreate):
-    id: int
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -126,7 +119,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password"
         )
-    
+
     user = UserInDB(**user_query.data[0])
     
     # Verify password
@@ -146,7 +139,6 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
 @app.post("/oauth/google", response_model=dict)
 async def handle_google_oauth(user_data: dict):
     try:
-        print("User_data", user_data)
         # Check if user already exists
         user_query = supabase.table("users").select("*").eq("username", user_data["email"]).execute()
         
@@ -163,9 +155,10 @@ async def handle_google_oauth(user_data: dict):
             data={"sub": user_data["email"]}, expires_delta=access_token_expires
         )
         
+        # Check if user already exists, and if yes, return username from db
         if user_query.data:
             return {"access_token": access_token, "token_type": "bearer", "name": user_query.data[0]["name"]}
-        return {"access_token": access_token, "token_type": "bearer", "name": user_data.get("name", "")}
+        return {"access_token": access_token, "token_type": "bearer", "name": user_data["name"]}
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -194,11 +187,9 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         raise credentials_exception
     return {"username": username, "id": user_query.data[0]["id"]}
 
-# New endpoint to update user name
 @app.put("/users/update-name", response_model=dict)
 async def update_user_name(user_update: UserUpdate, current_user: dict = Depends(get_current_user)):
     try:
-        # Update user name in database
         result = supabase.table("users").update({"name": user_update.name}).eq("id", current_user["id"]).execute()
         
         if not result.data:
@@ -214,19 +205,16 @@ async def update_user_name(user_update: UserUpdate, current_user: dict = Depends
             detail=f"An error occurred while updating the name: {str(e)}"
         )
 
-@app.post("/transactions/", response_model=Transaction)
+@app.post("/transactions/")
 async def create_transaction(transaction: TransactionCreate, current_user: dict = Depends(get_current_user)):
     try:
-        # print("Entered create_transaction")
         transaction_data = transaction.dict()
         transaction_data["user_id"] = current_user["id"]
         # Ensure amount is an integer
         transaction_data["amount"] = int(transaction_data["amount"])
         transaction_data["date"] = transaction_data["date"].isoformat()
         result = supabase.table("transactions").insert(transaction_data).execute()
-        # Convert date string back to date object in response
         response_data = {**result.data[0]}
-        response_data["date"] = date.fromisoformat(response_data["date"])
         return response_data
     except Exception as e:
         raise HTTPException(
@@ -234,14 +222,10 @@ async def create_transaction(transaction: TransactionCreate, current_user: dict 
             detail=f"An error occurred while creating the transaction: {str(e)}"
         )
 
-@app.get("/transactions/", response_model=List[Transaction])
+@app.get("/transactions/")
 async def get_transactions(current_user: dict = Depends(get_current_user)):
     try:
-        # print("Entered get_transaction")
         result = supabase.table("transactions").select("*").eq("user_id", current_user["id"]).execute()
-        # Convert date strings to date objects in response
-        for transaction in result.data:
-            transaction["date"] = date.fromisoformat(transaction["date"])
         return result.data
     except Exception as e:
         raise HTTPException(
@@ -252,7 +236,7 @@ async def get_transactions(current_user: dict = Depends(get_current_user)):
 @app.delete("/transactions/{transaction_id}", response_model=dict)
 async def delete_transaction(transaction_id: int, current_user: dict = Depends(get_current_user)):
     try:
-        # Check if transaction exists and belongs to current user
+
         transaction_query = supabase.table("transactions").select("*").eq("id", transaction_id).eq("user_id", current_user["id"]).execute()
         if not transaction_query.data:
             raise HTTPException(
@@ -260,7 +244,6 @@ async def delete_transaction(transaction_id: int, current_user: dict = Depends(g
                 detail="Transaction not found or you don't have permission to delete it"
             )
         
-        # Delete the transaction
         result = supabase.table("transactions").delete().eq("id", transaction_id).execute()
         return {"message": "Transaction deleted successfully"}
     except Exception as e:
@@ -269,7 +252,7 @@ async def delete_transaction(transaction_id: int, current_user: dict = Depends(g
             detail=f"An error occurred while deleting the transaction: {str(e)}"
         )
 
-@app.post("/assets-liabilities/", response_model=AssetLiability)
+@app.post("/assets-liabilities/")
 async def create_asset_liability(asset_liability: AssetLiabilityCreate, current_user: dict = Depends(get_current_user)):
     try:
         asset_liability_data = asset_liability.dict()
@@ -280,7 +263,6 @@ async def create_asset_liability(asset_liability: AssetLiabilityCreate, current_
         result = supabase.table("assets_liabilities").insert(asset_liability_data).execute()
         
         response_data = {**result.data[0]}
-        response_data["date"] = date.fromisoformat(response_data["date"])
         return response_data
     except Exception as e:
         raise HTTPException(
@@ -288,12 +270,10 @@ async def create_asset_liability(asset_liability: AssetLiabilityCreate, current_
             detail=f"An error occurred while creating the asset/liability: {str(e)}"
         )
 
-@app.get("/assets-liabilities/", response_model=List[AssetLiability])
+@app.get("/assets-liabilities/")
 async def get_assets_liabilities(current_user: dict = Depends(get_current_user)):
     try:
         result = supabase.table("assets_liabilities").select("*").eq("user_id", current_user["id"]).execute()
-        for item in result.data:
-            item["date"] = date.fromisoformat(item["date"])
         return result.data
     except Exception as e:
         raise HTTPException(
